@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  codePipeline GitHub Test
+
+Resources:
+  LambdaFunctionOverHttps:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: hello_world/
+      Handler: hello_world.app
+      Runtime: python3.8
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /hello_world
+            Method: get

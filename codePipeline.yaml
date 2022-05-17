@@ -1,0 +1,197 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  GitHubRepositoryID:
+    Type: String
+  SourceBranchName:
+    Type: String
+
+Resources:
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: GitHub-Connection
+      ProviderType: GitHub
+
+  CodeBuildBackEnd:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: build-project
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-backend.yml
+      Environment:
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: True
+        EnvironmentVariables:
+          - Name: S3_DEPLOY_BUCKET
+            Value: !Ref S3BucketDeploy
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: pipeline-github-source
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: True
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3BucketArtifactStore
+      Stages: 
+        - Name: Source
+          Actions:
+            - Name: Source
+              RunOrder: 1
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              Configuration:
+                FullRepositoryId: !Ref GitHubRepositoryID
+                ConnectionArn: !Ref GitHubConnection
+                BranchName: !Ref SourceBranchName
+              OutputArtifacts:
+                - Name: SourceCode
+        - Name: Build
+          Actions:
+            - Name: Build
+              RunOrder: 2
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuildBackEnd
+                EnvironmentVariables: !Sub '[{"name":"S3_DEPLOY_BUCKET","value":"${S3BucketDeploy}","type":"PLAINTEXT"}]'
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildArtifact
+        - Name: Deploy
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                ChangeSetName: changeset-backend
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                Capabilities: CAPABILITY_NAMED_IAM
+                StackName: stack-backend-deploy
+                TemplatePath: BuildArtifact::src/backend/packaged-template.yaml
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: 1
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: changeset-backend
+                RoleArn: !GetAtt CodePipelineRole.Arn
+                Capabilities: CAPABILITY_NAMED_IAM
+                StackName: !Sub stack-backend-deploy
+              RunOrder: 3
+
+  CodeBuildRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: code-build-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "codebuild.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: code-build-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - sns:Publish
+              - sts:AssumeRole
+              - cloudfront:CreateInvalidation
+            Resource: "*"
+      Roles:
+        - !Ref CodeBuildRole
+
+  CodePipelineRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: pipeline-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "codepipeline.amazonaws.com"
+                - "cloudformation.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeCommitFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: pipeline-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - cloudformation:*
+              - codebuild:*
+              - codestar-connections:*
+              - ec2:*
+              - iam:*
+              - s3:*
+              - states:*
+              - lambda:*
+              - apigateway:*
+              - events:*
+              - sqs:*
+              - logs:*
+              - cloudwatch:*
+            Resource: "*"
+      Roles:
+        - !Ref CodePipelineRole
+
+  S3BucketArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Sub s3-deploy-codepipeline-artifactstore-${AWS::AccountId}
+
+  S3BucketDeploy:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Sub s3-deploy-codepipeline-deploy-${AWS::AccountId}

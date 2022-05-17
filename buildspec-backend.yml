@@ -1,0 +1,16 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+       python: 3.8
+    commands:
+      - pip install cfn-lint
+  build:
+    commands:
+      - cd src/backend
+      - cfn-lint -t template.yaml --ignore-checks W2001
+      - aws cloudformation package --template-file template.yaml --s3-bucket ${S3_DEPLOY_BUCKET} --output-template-file packaged-template.yaml
+artifacts:
+  files:
+    - src/backend/packaged-template.yaml
