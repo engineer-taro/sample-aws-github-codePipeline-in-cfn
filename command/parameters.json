@@ -1,10 +1,10 @@
 [
     {
       "ParameterKey": "GitHubRepositoryID",
-      "ParameterValue": "userName/repositoryName" <- change your repositoryName
+      "ParameterValue": "userName/repositoryName"
     },
     {
       "ParameterKey": "SourceBranchName",
-      "ParameterValue": "codepipeline/dev" <- change target branch name
+      "ParameterValue": "codepipeline/dev"
     }
 ]
